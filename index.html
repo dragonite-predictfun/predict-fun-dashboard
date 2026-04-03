@@ -32,16 +32,16 @@
   }
   .stats-row {
     display: flex;
-    gap: 16px;
+    gap: 12px;
     margin-bottom: 16px;
     flex-wrap: wrap;
   }
   .stat-card {
     background: #222;
     border-radius: 10px;
-    padding: 12px 18px;
+    padding: 12px 16px;
     flex: 1;
-    min-width: 140px;
+    min-width: 120px;
     border: 1px solid #333;
   }
   .stat-card .label {
@@ -52,7 +52,7 @@
     margin-bottom: 4px;
   }
   .stat-card .value {
-    font-size: 22px;
+    font-size: 20px;
     font-weight: 700;
   }
   .stat-card .change {
@@ -65,6 +65,7 @@
   .vol-val { color: #06B6D4; }
   .monthly-val { color: #F59E0B; }
   .total-val { color: #10B981; }
+  .users-val { color: #EC4899; }
   .chart-container {
     background: #222;
     border-radius: 10px;
@@ -142,7 +143,7 @@
   <div>
     <h1><span>Predict.fun</span> Data Dashboard</h1>
   </div>
-  <div class="subtitle">Live from DeFiLlama & Predict.fun API Â· Auto-refreshes</div>
+  <div class="subtitle">Live from DeFiLlama & Predict.fun API &middot; Auto-refreshes</div>
 </div>
 
 <div class="stats-row" id="stats-row">
@@ -166,6 +167,11 @@
     <div class="value total-val" id="stat-voltotal">--</div>
     <div class="change" id="stat-voltotal-note"></div>
   </div>
+  <div class="stat-card">
+    <div class="label">Total Users</div>
+    <div class="value users-val" id="stat-users">--</div>
+    <div class="change" id="stat-users-note"></div>
+  </div>
 </div>
 
 <div class="chart-container">
@@ -185,8 +191,8 @@
 </div>
 
 <div class="footer">
-  Source: <a href="https://defillama.com/protocol/predict-fun" target="_blank">DeFiLlama</a> Â·
-  <a href="https://predict.fun" target="_blank">predict.fun</a> Â·
+  Source: <a href="https://defillama.com/protocol/predict-fun" target="_blank">DeFiLlama</a> &middot;
+  <a href="https://predict.fun" target="_blank">predict.fun</a> &middot;
   Data updates every page load
 </div>
 
@@ -199,6 +205,12 @@ function fmt(n) {
   if (n >= 1e6) return '$' + (n/1e6).toFixed(1) + 'M';
   if (n >= 1e3) return '$' + (n/1e3).toFixed(0) + 'K';
   return '$' + n.toFixed(0);
+}
+
+function fmtUsers(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return n.toLocaleString();
 }
 
 function pctChange(curr, prev) {
@@ -220,19 +232,50 @@ function toggleDataset(key, btn) {
   chart.update();
 }
 
+// Fetch predict.fun homepage stats (Total Volume, Users, Bets)
+async function fetchPredictFunStats() {
+  try {
+    // Try fetching predict.fun homepage and parsing stats from DOM
+    // Using an iframe approach as fallback
+    const controller = new AbortController();
+    const timeout = setTimeout(function() { controller.abort(); }, 5000);
+
+    const resp = await fetch('https://predict.fun/', {
+      signal: controller.signal,
+      mode: 'cors'
+    });
+    clearTimeout(timeout);
+    const html = await resp.text();
+
+    // Parse stats from HTML (works if SSR)
+    const volMatch = html.match(/\$([\d,]+)\s*(?:<[^>]*>)*\s*Total volume/i);
+    const usersMatch = html.match(/([\d,]+)\s*(?:<[^>]*>)*\s*Total users/i);
+    const betsMatch = html.match(/([\d,]+)\s*(?:<[^>]*>)*\s*Bets made/i);
+
+    return {
+      totalVolume: volMatch ? parseInt(volMatch[1].replace(/,/g, '')) : null,
+      totalUsers: usersMatch ? parseInt(usersMatch[1].replace(/,/g, '')) : null,
+      totalBets: betsMatch ? parseInt(betsMatch[1].replace(/,/g, '')) : null
+    };
+  } catch (e) {
+    return { totalVolume: null, totalUsers: null, totalBets: null };
+  }
+}
+
 async function fetchData() {
   try {
-    // Fetch TVL and DEX volume in parallel
-    const [tvlResp, volResp] = await Promise.all([
+    // Fetch TVL, DEX volume, and predict.fun stats in parallel
+    const [tvlResp, volResp, pfStats] = await Promise.all([
       fetch('https://api.llama.fi/protocol/predict-fun'),
-      fetch('https://api.llama.fi/summary/dexs/predict-fun')
+      fetch('https://api.llama.fi/summary/dexs/predict-fun'),
+      fetchPredictFunStats()
     ]);
 
     const tvlData = await tvlResp.json();
     const volText = await volResp.text();
     // Parse first JSON object from vol response
-    let depth = 0, start = -1, end = -1;
-    for (let i = 0; i < volText.length; i++) {
+    var depth = 0, start = -1, end = -1;
+    for (var i = 0; i < volText.length; i++) {
       if (volText[i] === '{' && start === -1) start = i;
       if (volText[i] === '{') depth++;
       if (volText[i] === '}') depth--;
@@ -243,41 +286,60 @@ async function fetchData() {
     // Process TVL data
     const tvlRaw = tvlData.tvl || [];
     const cutoff = new Date('2025-12-15').getTime() / 1000;
-    const tvlRecent = tvlRaw.filter(e => e.date >= cutoff);
+    const tvlRecent = tvlRaw.filter(function(e) { return e.date >= cutoff; });
 
     // Build aligned date labels (daily)
     const allDates = new Set();
-    tvlRecent.forEach(e => allDates.add(e.date));
-    const volChart = (volData.totalDataChart || []).filter(e => e[0] >= cutoff);
-    volChart.forEach(e => allDates.add(e[0]));
-    const sortedDates = [...allDates].sort((a,b) => a - b);
+    tvlRecent.forEach(function(e) { allDates.add(e.date); });
+    const volChart = (volData.totalDataChart || []).filter(function(e) { return e[0] >= cutoff; });
+    volChart.forEach(function(e) { allDates.add(e[0]); });
+    const sortedDates = Array.from(allDates).sort(function(a,b) { return a - b; });
+
+    // Calculate total volume from ALL chart data (including before cutoff) for cumulative baseline
+    const allVolChart = volData.totalDataChart || [];
+    var preCutoffVolume = 0;
+    allVolChart.forEach(function(e) {
+      if (e[0] < cutoff) preCutoffVolume += e[1];
+    });
+
+    // If predict.fun stats have a higher total, use the difference as additional baseline
+    var totalAllTimeVol = volData.totalAllTime || 0;
+    if (pfStats.totalVolume && pfStats.totalVolume > totalAllTimeVol) {
+      totalAllTimeVol = pfStats.totalVolume;
+    }
 
     // Create maps
     const tvlMap = {};
-    tvlRecent.forEach(e => { tvlMap[e.date] = e.totalLiquidityUSD; });
+    tvlRecent.forEach(function(e) { tvlMap[e.date] = e.totalLiquidityUSD; });
     const volMap = {};
-    volChart.forEach(([ts, v]) => { volMap[ts] = v; });
+    volChart.forEach(function(e) { volMap[e[0]] = e[1]; });
 
     // Build daily data arrays
     const labels = [];
     const tvlValues = [];
     const dailyVolValues = [];
-    let cumVol = 0;
+
+    // Cumulative starts from the pre-cutoff baseline
+    // Use totalAllTimeVol - sum(visible chart data) as the offset
+    var visibleChartSum = 0;
+    volChart.forEach(function(e) { visibleChartSum += e[1]; });
+    var cumVol = totalAllTimeVol - visibleChartSum;
+    if (cumVol < 0) cumVol = preCutoffVolume; // fallback
     const cumVolValues = [];
 
     // Monthly aggregation
     const monthlyMap = {};
 
-    sortedDates.forEach(ts => {
+    sortedDates.forEach(function(ts) {
       labels.push(tsToLabel(ts));
       tvlValues.push(tvlMap[ts] || null);
-      const dv = volMap[ts] || 0;
+      var dv = volMap[ts] || 0;
       dailyVolValues.push(dv > 0 ? dv : null);
       cumVol += dv;
       cumVolValues.push(cumVol);
 
-      const d = new Date(ts * 1000);
-      const mk = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+      var d = new Date(ts * 1000);
+      var mk = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
       if (!monthlyMap[mk]) monthlyMap[mk] = { total: 0, lastIdx: 0 };
       monthlyMap[mk].total += dv;
       monthlyMap[mk].lastIdx = labels.length - 1;
@@ -285,39 +347,53 @@ async function fetchData() {
 
     // Build monthly bar data (show one bar per month at last day of month)
     const monthlyBarData = new Array(labels.length).fill(null);
-    Object.values(monthlyMap).forEach(m => {
+    Object.values(monthlyMap).forEach(function(m) {
       monthlyBarData[m.lastIdx] = m.total;
     });
 
     // Update stats
-    const lastTvl = tvlValues.filter(v => v !== null).slice(-1)[0] || 0;
-    const prevTvl = tvlValues.filter(v => v !== null).slice(-8, -7)[0] || 0;
+    var lastTvl = tvlValues.filter(function(v) { return v !== null; }).slice(-1)[0] || 0;
+    var prevTvl = tvlValues.filter(function(v) { return v !== null; }).slice(-8, -7)[0] || 0;
     document.getElementById('stat-tvl').textContent = fmt(lastTvl);
-    const tvlPct = pctChange(lastTvl, prevTvl);
+    var tvlPct = pctChange(lastTvl, prevTvl);
     if (tvlPct !== null) {
-      const el = document.getElementById('stat-tvl-change');
-      el.textContent = (tvlPct > 0 ? 'â² ' : 'â¼ ') + Math.abs(tvlPct) + '% (7d)';
+      var el = document.getElementById('stat-tvl-change');
+      el.textContent = (tvlPct > 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(tvlPct) + '% (7d)';
       el.className = 'change ' + (tvlPct > 0 ? 'up' : 'down');
     }
 
     document.getElementById('stat-vol24').textContent = fmt(volData.total24h || 0);
-    const vol24Pct = pctChange(volData.total24h, volData.total48hto24h);
+    var vol24Pct = pctChange(volData.total24h, volData.total48hto24h);
     if (vol24Pct !== null) {
-      const el = document.getElementById('stat-vol24-change');
-      el.textContent = (vol24Pct > 0 ? 'â² ' : 'â¼ ') + Math.abs(vol24Pct) + '% vs prev day';
-      el.className = 'change ' + (vol24Pct > 0 ? 'up' : 'down');
+      var el2 = document.getElementById('stat-vol24-change');
+      el2.textContent = (vol24Pct > 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(vol24Pct) + '% vs prev day';
+      el2.className = 'change ' + (vol24Pct > 0 ? 'up' : 'down');
     }
 
-    document.getElementById('stat-vol30').textContent = fmt(volData.total30d || 0);
-    document.getElementById('stat-voltotal').textContent = fmt(volData.totalAllTime || cumVol);
-    document.getElementById('stat-voltotal-note').textContent = 'All time (DeFiLlama)';
+    // 30d volume - use predict.fun stats if available (more accurate)
+    var vol30d = volData.total30d || 0;
+    document.getElementById('stat-vol30').textContent = fmt(vol30d);
+
+    // Total Volume - prefer predict.fun stats (includes all notional volume)
+    var displayTotalVol = totalAllTimeVol;
+    document.getElementById('stat-voltotal').textContent = fmt(displayTotalVol);
+    document.getElementById('stat-voltotal-note').textContent = pfStats.totalVolume ? 'All time (predict.fun)' : 'All time (DeFiLlama)';
+
+    // Users
+    if (pfStats.totalUsers) {
+      document.getElementById('stat-users').textContent = fmtUsers(pfStats.totalUsers);
+      document.getElementById('stat-users-note').textContent = 'All time (predict.fun)';
+    } else {
+      document.getElementById('stat-users').textContent = '--';
+      document.getElementById('stat-users-note').textContent = 'Visit predict.fun';
+    }
 
     // Create chart
     document.getElementById('loading').style.display = 'none';
-    const canvas = document.getElementById('mainChart');
+    var canvas = document.getElementById('mainChart');
     canvas.style.display = 'block';
 
-    const ctx = canvas.getContext('2d');
+    var ctx = canvas.getContext('2d');
     chart = new Chart(ctx, {
       type: 'line',
       data: {
@@ -400,9 +476,9 @@ async function fetchData() {
             borderWidth: 1,
             padding: 10,
             callbacks: {
-              label: function(ctx) {
-                if (ctx.raw === null) return null;
-                return ctx.dataset.label + ': ' + fmt(ctx.raw);
+              label: function(context) {
+                if (context.raw === null) return null;
+                return context.dataset.label + ': ' + fmt(context.raw);
               }
             }
           }
@@ -424,7 +500,7 @@ async function fetchData() {
             ticks: {
               color: '#7C3AED',
               font: { size: 10 },
-              callback: v => fmt(v)
+              callback: function(v) { return fmt(v); }
             },
             grid: { color: 'rgba(255,255,255,0.04)' },
             beginAtZero: true
@@ -436,7 +512,7 @@ async function fetchData() {
             ticks: {
               color: '#06B6D4',
               font: { size: 10 },
-              callback: v => fmt(v)
+              callback: function(v) { return fmt(v); }
             },
             grid: { drawOnChartArea: false },
             beginAtZero: true
@@ -448,18 +524,15 @@ async function fetchData() {
             ticks: {
               color: '#10B981',
               font: { size: 10 },
-              callback: v => fmt(v)
+              callback: function(v) { return fmt(v); }
             },
             grid: { drawOnChartArea: false },
             display: false,
-            beginAtZero: true
+            beginAtZero: false
           }
         }
       }
     });
-
-    // Show/hide y2 axis based on cumulative toggle
-    const origToggle = window.toggleDataset;
 
   } catch (err) {
     document.getElementById('loading').innerHTML =
