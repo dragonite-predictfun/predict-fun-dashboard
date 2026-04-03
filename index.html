@@ -239,7 +239,7 @@ async function fetchPredictFunStats() {
     const controller = new AbortController();
     const timeout = setTimeout(function() { controller.abort(); }, 8000);
 
-    const resp = await fetch('https://graphql.predict.fun/graphql', {
+    const resp = await fetch('https://corsproxy.io/?' + encodeURIComponent('https://graphql.predict.fun/graphql'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
