@@ -143,7 +143,7 @@
   <div>
     <h1><span>Predict.fun</span> Data Dashboard</h1>
   </div>
-  <div class="subtitle">Live from DeFiLlama & Predict.fun API &middot; Auto-refreshes</div>
+  <div class="subtitle">Live from DeFiLlama &amp; Predict.fun GraphQL &middot; Auto-refreshes</div>
 </div>
 
 <div class="stats-row" id="stats-row">
@@ -235,30 +235,30 @@ function toggleDataset(key, btn) {
 // Fetch predict.fun homepage stats (Total Volume, Users, Bets)
 async function fetchPredictFunStats() {
   try {
-    // Try fetching predict.fun homepage and parsing stats from DOM
-    // Using an iframe approach as fallback
+    // Fetch live stats from predict.fun public GraphQL API
     const controller = new AbortController();
-    const timeout = setTimeout(function() { controller.abort(); }, 5000);
+    const timeout = setTimeout(function() { controller.abort(); }, 8000);
 
-    const resp = await fetch('https://predict.fun/', {
+    const resp = await fetch('https://graphql.predict.fun/graphql', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
-      mode: 'cors'
+      body: JSON.stringify({
+        query: '{ statistics { totalVolumeUsd totalAccountsCount totalBetsToDateCount volume30dUsd } }'
+      })
     });
     clearTimeout(timeout);
-    const html = await resp.text();
-
-    // Parse stats from HTML (works if SSR)
-    const volMatch = html.match(/\$([\d,]+)\s*(?:<[^>]*>)*\s*Total volume/i);
-    const usersMatch = html.match(/([\d,]+)\s*(?:<[^>]*>)*\s*Total users/i);
-    const betsMatch = html.match(/([\d,]+)\s*(?:<[^>]*>)*\s*Bets made/i);
+    const json = await resp.json();
+    var s = json && json.data && json.data.statistics;
 
     return {
-      totalVolume: volMatch ? parseInt(volMatch[1].replace(/,/g, '')) : null,
-      totalUsers: usersMatch ? parseInt(usersMatch[1].replace(/,/g, '')) : null,
-      totalBets: betsMatch ? parseInt(betsMatch[1].replace(/,/g, '')) : null
+      totalVolume: s && s.totalVolumeUsd ? Math.round(s.totalVolumeUsd) : null,
+      totalUsers: s && s.totalAccountsCount ? s.totalAccountsCount : null,
+      totalBets: s && s.totalBetsToDateCount ? s.totalBetsToDateCount : null,
+      volume30d: s && s.volume30dUsd ? Math.round(s.volume30dUsd) : null
     };
   } catch (e) {
-    return { totalVolume: null, totalUsers: null, totalBets: null };
+    return { totalVolume: null, totalUsers: null, totalBets: null, volume30d: null };
   }
 }
 
@@ -370,19 +370,20 @@ async function fetchData() {
       el2.className = 'change ' + (vol24Pct > 0 ? 'up' : 'down');
     }
 
-    // 30d volume - use predict.fun stats if available (more accurate)
-    var vol30d = volData.total30d || 0;
+    // 30d volume - prefer predict.fun live stats (includes all notional volume)
+    var vol30d = (pfStats.volume30d && pfStats.volume30d > 0) ? pfStats.volume30d : (volData.total30d || 0);
     document.getElementById('stat-vol30').textContent = fmt(vol30d);
+    document.getElementById('stat-vol30-change').textContent = pfStats.volume30d ? 'predict.fun' : '';
 
     // Total Volume - prefer predict.fun stats (includes all notional volume)
-    var displayTotalVol = totalAllTimeVol;
+    var displayTotalVol = (pfStats.totalVolume && pfStats.totalVolume > totalAllTimeVol) ? pfStats.totalVolume : totalAllTimeVol;
     document.getElementById('stat-voltotal').textContent = fmt(displayTotalVol);
     document.getElementById('stat-voltotal-note').textContent = pfStats.totalVolume ? 'All time (predict.fun)' : 'All time (DeFiLlama)';
 
     // Users
     if (pfStats.totalUsers) {
       document.getElementById('stat-users').textContent = fmtUsers(pfStats.totalUsers);
-      document.getElementById('stat-users-note').textContent = 'All time (predict.fun)';
+      document.getElementById('stat-users-note').textContent = pfStats.totalBets ? fmtUsers(pfStats.totalBets) + ' bets' : 'All time';
     } else {
       document.getElementById('stat-users').textContent = '--';
       document.getElementById('stat-users-note').textContent = 'Visit predict.fun';
