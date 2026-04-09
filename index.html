@@ -163,6 +163,548 @@
     <div class="change" id="stat-vol30-change"></div>
   </div>
   <div class="stat-card">
+    <div class="label">Total Cumulative Volume</div>
+    <div class="value total-val" id="stat-voltotal">--</div>
+    <div class="change" id="stat-voltotal-note"></div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Total Users</div>
+    <div class="value users-val" id="stat-users">--</div>
+    <div class="change" id="stat-users-note"></div>
+  </div>
+</div>
+
+<div class="chart-container">
+  <div class="toggle-row">
+    <button class="toggle-btn tvl active" data-ds="tvl" onclick="toggleDataset('tvl', this)">TVL</button>
+    <button class="toggle-btn daily active" data-ds="dailyVol" onclick="toggleDataset('dailyVol', this)">Daily Volume</button>
+    <button class="toggle-btn monthly active" data-ds="monthlyVol" onclick="toggleDataset('monthlyVol', this)">Monthly Volume</button>
+    <button class="toggle-btn cumulative" data-ds="cumVol" onclick="toggleDataset('cumVol', this)">Cumulative Volume</button>
+  </div>
+  <div class="chart-wrapper">
+    <div class="loading" id="loading">
+      <div class="spinner"></div>
+      Fetching live data from DeFiLlama...
+    </div>
+    <canvas id="mainChart" style="display:none;"></canvas>
+  </div>
+</div>
+
+<div class="footer">
+  Source: <a href="https://defillama.com/protocol/predict-fun" target="_blank">DeFiLlama</a> &middot;
+  <a href="https://predict.fun" target="_blank">predict.fun</a> &middot;
+  Data updates every page load
+</div>
+
+<script>
+let chart = null;
+const datasets = {};
+
+function fmt(n) {
+  if (n >= 1e9) return '$' + (n/1e9).toFixed(2) + 'B';
+  if (n >= 1e6) return '$' + (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return '$' + (n/1e3).toFixed(0) + 'K';
+  return '$' + n.toFixed(0);
+}
+
+function fmtUsers(n) {
+  if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return n.toLocaleString();
+}
+
+function pctChange(curr, prev) {
+  if (!prev || prev === 0) return null;
+  return ((curr - prev) / prev * 100).toFixed(1);
+}
+
+function tsToLabel(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleDateString('en', { month: 'short', day: 'numeric' });
+}
+
+function toggleDataset(key, btn) {
+  btn.classList.toggle('active');
+  var ch = Chart.instances[0];
+  if (!ch) return;
+  var idx = ch.data.datasets.findIndex(function(ds) { return ds._key === key; });
+  if (idx === -1) return;
+  ch.data.datasets[idx].hidden = !btn.classList.contains('active');
+  if (key === 'cumVol' && ch.options.scales.y2) {
+    ch.options.scales.y2.display = btn.classList.contains('active');
+  }
+  ch.update();
+}
+
+// Fetch predict.fun homepage stats (Total Cumulative Volume, Users, Bets)
+async function fetchPredictFunStats() {
+  try {
+    // Fetch stats from stats.json (updated hourly by GitHub Actions)
+    const resp = await fetch('stats.json?' + Date.now());
+    if (!resp.ok) throw new Error('Failed to fetch stats.json');
+    const json = await resp.json();
+    const s = json.data && json.data.statistics ? json.data.statistics : null;
+    return {
+      totalVolume: s && s.totalVolumeUsd ? Math.round(s.totalVolumeUsd) : null,
+      totalUsers: s && s.totalAccountsCount ? s.totalAccountsCount : null,
+      totalBets: s && s.totalBetsToDateCount ? s.totalBetsToDateCount : null,
+      volume30d: s && s.volume30dUsd ? Math.round(s.volume30dUsd) : null
+    };
+  } catch (e) {
+    console.error('Failed to fetch predict.fun stats:', e);
+    return { totalVolume: null, totalUsers: null, totalBets: null, volume30d: null };
+  }
+}
+
+async function fetchData() {
+  try {
+    // Fetch TVL, DEX volume, and predict.fun stats in parallel
+    const [tvlResp, volResp, pfStats] = await Promise.all([
+      fetch('https://api.llama.fi/protocol/predict-fun'),
+      fetch('https://api.llama.fi/summary/dexs/predict-fun'),
+      fetchPredictFunStats()
+    ]);
+
+    const tvlData = await tvlResp.json();
+    const volText = await volResp.text();
+    // Parse first JSON object from vol response
+    var depth = 0, start = -1, end = -1;
+    for (var i = 0; i < volText.length; i++) {
+      if (volText[i] === '{' && start === -1) start = i;
+      if (volText[i] === '{') depth++;
+      if (volText[i] === '}') depth--;
+      if (depth === 0 && start !== -1) { end = i + 1; break; }
+    }
+    const volData = JSON.parse(volText.substring(start, end));
+
+    // Process TVL data
+    const tvlRaw = tvlData.tvl || [];
+    const cutoff = new Date('2025-12-15').getTime() / 1000;
+    const tvlRecent = tvlRaw.filter(function(e) { return e.date >= cutoff; });
+
+    // Build aligned date labels (daily)
+    const allDates = new Set();
+    tvlRecent.forEach(function(e) { allDates.add(e.date); });
+    const volChart = (volData.totalDataChart || []).filter(function(e) { return e[0] >= cutoff; });
+    volChart.forEach(function(e) { allDates.add(e[0]); });
+    const sortedDates = Array.from(allDates).sort(function(a,b) { return a - b; });
+
+    // Calculate total volume from ALL chart data (including before cutoff) for cumulative baseline
+    const allVolChart = volData.totalDataChart || [];
+    var preCutoffVolume = 0;
+    allVolChart.forEach(function(e) {
+      if (e[0] < cutoff) preCutoffVolume += e[1];
+    });
+
+    // If predict.fun stats have a higher total, use the difference as additional baseline
+    var totalAllTimeVol = volData.totalAllTime || 0;
+    if (pfStats.totalVolume && pfStats.totalVolume > totalAllTimeVol) {
+      totalAllTimeVol = pfStats.totalVolume;
+    }
+
+    // Create maps
+    const tvlMap = {};
+    tvlRecent.forEach(function(e) { tvlMap[e.date] = e.totalLiquidityUSD; });
+    const volMap = {};
+    volChart.forEach(function(e) { volMap[e[0]] = e[1]; });
+
+    // Build daily data arrays
+    const labels = [];
+    const tvlValues = [];
+    const dailyVolValues = [];
+
+    // Cumulative starts from the pre-cutoff baseline
+    // Use totalAllTimeVol - sum(visible chart data) as the offset
+    var visibleChartSum = 0;
+    volChart.forEach(function(e) { visibleChartSum += e[1]; });
+    var cumVol = totalAllTimeVol - visibleChartSum;
+    if (cumVol < 0) cumVol = preCutoffVolume; // fallback
+    const cumVolValues = [];
+
+    // Monthly aggregation
+    const monthlyMap = {};
+
+    sortedDates.forEach(function(ts) {
+      labels.push(tsToLabel(ts));
+      tvlValues.push(tvlMap[ts] || null);
+      var dv = volMap[ts] || 0;
+      dailyVolValues.push(dv > 0 ? dv : null);
+      cumVol += dv;
+      cumVolValues.push(cumVol);
+
+      var d = new Date(ts * 1000);
+      var mk = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+      if (!monthlyMap[mk]) monthlyMap[mk] = { total: 0, lastIdx: 0 };
+      monthlyMap[mk].total += dv;
+      monthlyMap[mk].lastIdx = labels.length - 1;
+    });
+
+    // Build monthly bar data (show one bar per month at last day of month)
+    const monthlyBarData = new Array(labels.length).fill(null);
+    Object.values(monthlyMap).forEach(function(m) {
+      monthlyBarData[m.lastIdx] = m.total;
+    });
+
+    // Update stats
+    var lastTvl = tvlValues.filter(function(v) { return v !== null; }).slice(-1)[0] || 0;
+    var prevTvl = tvlValues.filter(function(v) { return v !== null; }).slice(-8, -7)[0] || 0;
+    document.getElementById('stat-tvl').textContent = fmt(lastTvl);
+    var tvlPct = pctChange(lastTvl, prevTvl);
+    if (tvlPct !== null) {
+      var el = document.getElementById('stat-tvl-change');
+      el.textContent = (tvlPct > 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(tvlPct) + '% (7d)';
+      el.className = 'change ' + (tvlPct > 0 ? 'up' : 'down');
+    }
+
+    document.getElementById('stat-vol24').textContent = fmt(volData.total24h || 0);
+    var vol24Pct = pctChange(volData.total24h, volData.total48hto24h);
+    if (vol24Pct !== null) {
+      var el2 = document.getElementById('stat-vol24-change');
+      el2.textContent = (vol24Pct > 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(vol24Pct) + '% vs prev day';
+      el2.className = 'change ' + (vol24Pct > 0 ? 'up' : 'down');
+    }
+
+    // 30d volume - prefer predict.fun live stats (includes all notional volume)
+    var vol30d = (pfStats.volume30d && pfStats.volume30d > 0) ? pfStats.volume30d : (volData.total30d || 0);
+    document.getElementById('stat-vol30').textContent = fmt(vol30d);
+    document.getElementById('stat-vol30-change').textContent = pfStats.volume30d ? 'predict.fun' : '';
+
+    // Total Cumulative Volume - prefer predict.fun stats (includes all notional volume)
+    var displayTotalVol = (pfStats.totalVolume && pfStats.totalVolume > totalAllTimeVol) ? pfStats.totalVolume : totalAllTimeVol;
+    document.getElementById('stat-voltotal').textContent = fmt(displayTotalVol);
+    document.getElementById('stat-voltotal-note').textContent = pfStats.totalVolume ? 'All time (predict.fun)' : 'All time (DeFiLlama)';
+
+    // Users
+    if (pfStats.totalUsers) {
+      document.getElementById('stat-users').textContent = fmtUsers(pfStats.totalUsers);
+      document.getElementById('stat-users-note').textContent = pfStats.totalBets ? fmtUsers(pfStats.totalBets) + ' bets' : 'All time';
+    } else {
+      document.getElementById('stat-users').textContent = '--';
+      document.getElementById('stat-users-note').textContent = 'Visit predict.fun';
+    }
+
+    // Create chart
+    document.getElementById('loading').style.display = 'none';
+    var canvas = document.getElementById('mainChart');
+    canvas.style.display = 'block';
+
+    var ctx = canvas.getContext('2d');
+    chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: [
+          {
+            _key: 'tvl',
+            label: 'TVL',
+            data: tvlValues,
+            borderColor: '#7C3AED',
+            backgroundColor: 'rgba(124,58,237,0.08)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            borderWidth: 2.5,
+            yAxisID: 'y',
+            order: 2
+          },
+          {
+            _key: 'dailyVol',
+            label: 'Daily Volume',
+            data: dailyVolValues,
+            borderColor: '#06B6D4',
+            backgroundColor: 'rgba(6,182,212,0.06)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            borderWidth: 1.5,
+            yAxisID: 'y1',
+            order: 3
+          },
+          {
+            _key: 'monthlyVol',
+            type: 'bar',
+            label: 'Monthly Volume',
+            data: monthlyBarData,
+            backgroundColor: 'rgba(245,158,11,0.35)',
+            borderColor: '#F59E0B',
+            borderWidth: 1,
+            borderRadius: 4,
+            yAxisID: 'y1',
+            order: 4,
+            barPercentage: 0.9,
+            categoryPercentage: 0.9
+          },
+          {
+            _key: 'cumVol',
+            label: 'Cumulative Volume',
+            data: cumVolValues,
+            borderColor: '#10B981',
+            backgroundColor: 'transparent',
+            fill: false,
+            tension: 0.3,
+            pointRadius: 0,
+            pointHoverRadius: 5,
+            borderWidth: 2,
+            borderDash: [6, 3],
+            yAxisID: 'y2',
+            hidden: true,
+            order: 1
+          }
+        ]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: {
+          mode: 'index',
+          intersect: false
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            backgroundColor: '#1F2937',
+            titleColor: '#F3F4F6',
+            bodyColor: '#D1D5DB',
+            borderColor: '#374151',
+            borderWidth: 1,
+            padding: 10,
+            callbacks: {
+              label: function(context) {
+                if (context.raw === null) return null;
+                return context.dataset.label + ': ' + fmt(context.raw);
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: {
+              color: '#6B7280',
+              maxRotation: 45,
+              font: { size: 10 },
+              maxTicksLimit: 15
+            },
+            grid: { color: 'rgba(255,255,255,0.04)' }
+          },
+          y: {
+            type: 'linear',
+            position: 'left',
+            title: { display: true, text: 'TVL', color: '#7C3AED', font: { size: 11 } },
+            ticks: {
+              color: '#7C3AED',
+              font: { size: 10 },
+              callback: function(v) { return fmt(v); }
+            },
+            grid: { color: 'rgba(255,255,255,0.04)' },
+            beginAtZero: true
+          },
+          y1: {
+            type: 'linear',
+            position: 'right',
+            title: { display: true, text: 'Volume', color: '#06B6D4', font: { size: 11 } },
+            ticks: {
+              color: '#06B6D4',
+              font: { size: 10 },
+              callback: function(v) { return fmt(v); }
+            },
+            grid: { drawOnChartArea: false },
+            beginAtZero: true
+          },
+          y2: {
+            type: 'linear',
+            position: 'right',
+            title: { display: false },
+            ticks: {
+              color: '#10B981',
+              font: { size: 10 },
+              callback: function(v) { return fmt(v); }
+            },
+            grid: { drawOnChartArea: false },
+            display: false,
+            beginAtZero: false
+          }
+        }
+      }
+    });
+
+  } catch (err) {
+    document.getElementById('loading').innerHTML =
+      '<div class="error-msg">Failed to load data: ' + err.message + '<br>This may be due to CORS restrictions. Try opening this page directly.</div>';
+  }
+}
+
+// Initial load
+fetchData();
+</script>
+</body>
+</html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Predict.fun - Live Data Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #191919;
+    color: #E5E7EB;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    padding: 16px 20px;
+    min-height: 100vh;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .header h1 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #F3F4F6;
+  }
+  .header h1 span { color: #7C3AED; }
+  .header .subtitle {
+    font-size: 11px;
+    color: #6B7280;
+  }
+  .stats-row {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+  .stat-card {
+    background: #222;
+    border-radius: 10px;
+    padding: 12px 16px;
+    flex: 1;
+    min-width: 120px;
+    border: 1px solid #333;
+  }
+  .stat-card .label {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #9CA3AF;
+    margin-bottom: 4px;
+  }
+  .stat-card .value {
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .stat-card .change {
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  .stat-card .change.up { color: #34D399; }
+  .stat-card .change.down { color: #F87171; }
+  .tvl-val { color: #7C3AED; }
+  .vol-val { color: #06B6D4; }
+  .monthly-val { color: #F59E0B; }
+  .total-val { color: #10B981; }
+  .users-val { color: #EC4899; }
+  .chart-container {
+    background: #222;
+    border-radius: 10px;
+    padding: 16px;
+    border: 1px solid #333;
+    margin-bottom: 14px;
+  }
+  .chart-wrapper {
+    position: relative;
+    height: 320px;
+  }
+  .toggle-row {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 10px;
+    flex-wrap: wrap;
+  }
+  .toggle-btn {
+    padding: 5px 14px;
+    border-radius: 6px;
+    border: 1px solid #444;
+    background: transparent;
+    color: #9CA3AF;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .toggle-btn.active { border-color: currentColor; color: #fff; }
+  .toggle-btn.tvl { --c: #7C3AED; }
+  .toggle-btn.tvl.active { background: rgba(124,58,237,0.15); border-color: #7C3AED; color: #A78BFA; }
+  .toggle-btn.daily { --c: #06B6D4; }
+  .toggle-btn.daily.active { background: rgba(6,182,212,0.15); border-color: #06B6D4; color: #22D3EE; }
+  .toggle-btn.monthly { --c: #F59E0B; }
+  .toggle-btn.monthly.active { background: rgba(245,158,11,0.15); border-color: #F59E0B; color: #FBBF24; }
+  .toggle-btn.cumulative { --c: #10B981; }
+  .toggle-btn.cumulative.active { background: rgba(16,185,129,0.15); border-color: #10B981; color: #34D399; }
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 320px;
+    color: #6B7280;
+    font-size: 14px;
+  }
+  .loading .spinner {
+    width: 20px; height: 20px;
+    border: 2px solid #444;
+    border-top-color: #7C3AED;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 10px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .footer {
+    text-align: center;
+    font-size: 10px;
+    color: #4B5563;
+    margin-top: 8px;
+  }
+  .footer a { color: #6B7280; text-decoration: none; }
+  .error-msg {
+    background: rgba(248,113,113,0.1);
+    border: 1px solid rgba(248,113,113,0.3);
+    border-radius: 8px;
+    padding: 12px;
+    color: #F87171;
+    font-size: 13px;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <h1><span>Predict.fun</span> Data Dashboard</h1>
+  </div>
+  <div class="subtitle">Live from DeFiLlama &amp; Predict.fun GraphQL &middot; Auto-refreshes</div>
+</div>
+
+<div class="stats-row" id="stats-row">
+  <div class="stat-card">
+    <div class="label">TVL</div>
+    <div class="value tvl-val" id="stat-tvl">--</div>
+    <div class="change" id="stat-tvl-change"></div>
+  </div>
+  <div class="stat-card">
+    <div class="label">24h Volume</div>
+    <div class="value vol-val" id="stat-vol24">--</div>
+    <div class="change" id="stat-vol24-change"></div>
+  </div>
+  <div class="stat-card">
+    <div class="label">30d Volume</div>
+    <div class="value monthly-val" id="stat-vol30">--</div>
+    <div class="change" id="stat-vol30-change"></div>
+  </div>
+  <div class="stat-card">
     <div class="label">Total Volume</div>
     <div class="value total-val" id="stat-voltotal">--</div>
     <div class="change" id="stat-voltotal-note"></div>
