@@ -1,0 +1,31 @@
+name: Update predict.fun stats
+
+on:
+  schedule:
+    - cron: '0 */1 * * *'  # Every hour
+  workflow_dispatch:  # Manual trigger
+
+permissions:
+  contents: write
+
+jobs:
+  update-stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch predict.fun stats
+        run: |
+          curl -s -X POST https://graphql.predict.fun/graphql \
+            -H 'Content-Type: application/json' \
+            -d '{"query":"{ statistics { totalVolumeUsd totalAccountsCount totalBetsToDateCount volume30dUsd } }"}' \
+            -o stats.json
+          cat stats.json
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add stats.json
+          git diff --staged --quiet || git commit -m "Update stats.json [skip ci]"
+          git push
