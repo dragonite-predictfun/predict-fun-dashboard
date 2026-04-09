@@ -172,6 +172,11 @@
     <div class="value users-val" id="stat-users">--</div>
     <div class="change" id="stat-users-note"></div>
   </div>
+    <div class="stat-card">
+      <div class="label">Orders Matched</div>
+      <div class="value orders-val" id="stat-orders">--</div>
+      <div class="change" id="stat-orders-note">All time (predict.fun)</div>
+    </div>
 </div>
 
 <div class="chart-container">
@@ -179,7 +184,7 @@
     <button class="toggle-btn tvl active" data-ds="tvl" onclick="toggleDataset('tvl', this)">TVL</button>
     <button class="toggle-btn daily active" data-ds="dailyVol" onclick="toggleDataset('dailyVol', this)">Daily Volume</button>
     <button class="toggle-btn monthly active" data-ds="monthlyVol" onclick="toggleDataset('monthlyVol', this)">Monthly Volume</button>
-    <button class="toggle-btn cumulative" data-ds="cumVol" onclick="toggleDataset('cumVol', this)">Cumulative Volume</button>
+    <button class="toggle-btn cumulative" data-ds="cumVol" onclick="toggleDataset('cumVol', this)">Total Cumulative Volume</button>
   </div>
   <div class="chart-wrapper">
     <div class="loading" id="loading">
@@ -377,7 +382,9 @@ async function fetchData() {
     // Users
     if (pfStats.totalUsers) {
       document.getElementById('stat-users').textContent = fmtUsers(pfStats.totalUsers);
-      document.getElementById('stat-users-note').textContent = pfStats.totalBets ? fmtUsers(pfStats.totalBets) + ' bets' : 'All time';
+      document.getElementById('stat-users-note').textContent = 'predict.fun';
+      document.getElementById('stat-orders').textContent = pfStats.totalBets ? fmtUsers(pfStats.totalBets) : '--';
+      document.getElementById('stat-orders-note').textContent = 'All time (predict.fun)';
     } else {
       document.getElementById('stat-users').textContent = '--';
       document.getElementById('stat-users-note').textContent = 'Visit predict.fun';
@@ -438,7 +445,7 @@ async function fetchData() {
           },
           {
             _key: 'cumVol',
-            label: 'Cumulative Volume',
+            label: 'Total Cumulative Volume',
             data: cumVolValues,
             borderColor: '#10B981',
             backgroundColor: 'transparent',
