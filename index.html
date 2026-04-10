@@ -238,7 +238,7 @@ function toggleDataset(key, btn) {
   if (key === 'cumVol' && ch.options.scales.y2) {
     ch.options.scales.y2.display = btn.classList.contains('active');
   }
-  ch.update();
+  ch.update('none');
 }
 
 // Fetch predict.fun homepage stats (Total Cumulative Volume, Users, Bets)
