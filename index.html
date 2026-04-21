@@ -361,9 +361,10 @@ async function fetchData() {
       el.className = 'change ' + (tvlPct > 0 ? 'up' : 'down');
     }
 
-    document.getElementById('stat-vol24').textContent = fmt(volData.total24h || 0);
+    var yesterdayVol = volData.totalDataChart && volData.totalDataChart.length >= 2 ? volData.totalDataChart[volData.totalDataChart.length - 2][1] : 0;
+    document.getElementById('stat-vol24').textContent = fmt(yesterdayVol);
     var dayBeforeVol = volData.totalDataChart && volData.totalDataChart.length >= 3 ? volData.totalDataChart[volData.totalDataChart.length - 3][1] : null;
-          var vol24Pct = pctChange(yesterdayVol, dayBeforeVol);
+    var vol24Pct = pctChange(yesterdayVol, dayBeforeVol);
     if (vol24Pct !== null) {
       var el2 = document.getElementById('stat-vol24-change');
       el2.textContent = (vol24Pct > 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(vol24Pct) + '% vs prev day';
