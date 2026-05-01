@@ -1,1 +1,1 @@
-{"data":null,"errors":[{"message":"[25672b] InternalServerError. error returned from database: server login failed: wrong password type","locations":[{"line":1,"column":3}],"path":["statistics"],"extensions":{"cause":"error returned from database: server login failed: wrong password type","code":"InternalServerError","errorId":"25672b"}}]}
+{"data":{"statistics":{"totalVolumeUsd":3202749708.2872715,"totalAccountsCount":178922,"totalBetsToDateCount":5139354,"volume30dUsd":1303393812.2144127}}}
