@@ -1,1 +1,1 @@
-{"data":{"statistics":{"totalVolumeUsd":3217986387.0036917,"totalAccountsCount":179692,"totalBetsToDateCount":5177171,"volume30dUsd":1312418065.7628632}}}
+{"data":null,"errors":[{"message":"[fb930f] InternalServerError. error returned from database: server login failed: wrong password type","locations":[{"line":1,"column":3}],"path":["statistics"],"extensions":{"cause":"error returned from database: server login failed: wrong password type","code":"InternalServerError","errorId":"fb930f"}}]}
