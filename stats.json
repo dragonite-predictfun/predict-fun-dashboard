@@ -1,1 +1,1 @@
-{"data":null,"errors":[{"message":"[a5df6b] InternalServerError. Unknown cause","locations":[{"line":1,"column":3}],"path":["statistics"],"extensions":{"cause":"Unknown cause","code":"InternalServerError","errorId":"a5df6b"}}]}
+{"data":{"statistics":{"totalVolumeUsd":4868309290.371551,"totalAccountsCount":812832,"totalBetsToDateCount":32761370,"volume30dUsd":714921083.4812335}}}
