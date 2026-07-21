@@ -287,7 +287,7 @@ async function fetchData() {
     }
     const volData = JSON.parse(volText.substring(start, end));
 
-    // Process TVL data â combine all chain TVLs (Binance + Blast)
+    // Process TVL data -- combine all chain TVLs (Binance + Blast)
     // DefiLlama protocol response stores TVL per chain in chainTvls, not top-level tvl
     var tvlRaw;
     if (tvlData.tvl && tvlData.tvl.length > 0) {
@@ -377,7 +377,7 @@ async function fetchData() {
       monthlyBarData[m.lastIdx] = m.total;
     });
 
-    // Update TVL card â prefer on-chain TVL from stats.json (Regular + Earning Yield)
+    // Update TVL card -- prefer on-chain TVL from stats.json (Regular + Earning Yield)
     // Falls back to DefiLlama simple TVL endpoint, then chart data
     var lastTvl = pfStats.tvl || (typeof simpleTvl === 'number' ? simpleTvl : null) || (tvlValues.filter(function(v) { return v !== null; }).slice(-1)[0] || 0);
     var prevTvl = tvlValues.filter(function(v) { return v !== null; }).slice(-8, -7)[0] || 0;
@@ -387,7 +387,7 @@ async function fetchData() {
     var tvlPct = pctChange(lastTvl, prevTvl);
     if (tvlPct !== null) {
       var el = document.getElementById('stat-tvl-change');
-      el.textContent = (tvlPct > 0 ? 'â² ' : 'â¼ ') + Math.abs(tvlPct) + '% (7d) Â· ' + tvlSource;
+      el.textContent = (tvlPct > 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(tvlPct) + '% (7d) \u00B7 ' + tvlSource;
       el.className = 'change ' + (tvlPct > 0 ? 'up' : 'down');
     } else {
       document.getElementById('stat-tvl-change').textContent = tvlSource;
@@ -399,7 +399,7 @@ async function fetchData() {
     var vol24Pct = pctChange(yesterdayVol, dayBeforeVol);
     if (vol24Pct !== null) {
       var el2 = document.getElementById('stat-vol24-change');
-      el2.textContent = (vol24Pct > 0 ? 'â² ' : 'â¼ ') + Math.abs(vol24Pct) + '% vs prev day';
+      el2.textContent = (vol24Pct > 0 ? '\u25B2 ' : '\u25BC ') + Math.abs(vol24Pct) + '% vs prev day';
       el2.className = 'change ' + (vol24Pct > 0 ? 'up' : 'down');
     }
 
