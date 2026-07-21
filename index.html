@@ -256,11 +256,12 @@ async function fetchPredictFunStats() {
       volume30d: s && s.volume30dUsd ? Math.round(s.volume30dUsd) : null,
       tvl: s && s.totalValueLockedUsd ? s.totalValueLockedUsd : null,
       regularTvl: s && s.regularTvlUsd ? s.regularTvlUsd : null,
-      earningYieldTvl: s && s.earningYieldTvlUsd ? s.earningYieldTvlUsd : null
+      earningYieldTvl: s && s.earningYieldTvlUsd ? s.earningYieldTvlUsd : null,
+      tvlSource: s && s.tvlSource ? s.tvlSource : null
     };
   } catch (e) {
     console.error('Failed to fetch predict.fun stats:', e);
-    return { totalVolume: null, totalUsers: null, totalBets: null, volume30d: null, tvl: null, regularTvl: null, earningYieldTvl: null };
+    return { totalVolume: null, totalUsers: null, totalBets: null, volume30d: null, tvl: null, regularTvl: null, earningYieldTvl: null, tvlSource: null };
   }
 }
 
