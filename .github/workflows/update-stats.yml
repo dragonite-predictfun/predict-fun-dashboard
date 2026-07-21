@@ -19,8 +19,90 @@ jobs:
           curl -s -X POST https://graphql.predict.fun/graphql \
             -H 'Content-Type: application/json' \
             -d '{"query":"{ statistics { totalVolumeUsd totalAccountsCount totalBetsToDateCount volume30dUsd } }"}' \
-            -o stats.json
-          cat stats.json
+            -o stats_graphql.json
+          cat stats_graphql.json
+
+      - name: Fetch on-chain TVL from BSC
+        run: |
+          RPC="https://bsc-dataseed.binance.org/"
+          USDT="0x55d398326f99059fF775485246999027B3197955"
+          VUSDT="0xecA88125a5ADbe82614ffC12D0DB554E2e2867C8"
+
+          # Predict.fun BSC contracts
+          WRAPPED_COLLATERAL="66239b70133773A72A0D589E5564E88a50Cd39e7"
+          YIELD_WRAPPED_COLLATERAL="Cfb9beF5F7B748aC72311F057f3a888BC73334D9"
+
+          # USDT balance of WrappedCollateral (Regular TVL)
+          USDT_REGULAR=$(curl -s -X POST "$RPC" \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"'"$USDT"'","data":"0x70a08231000000000000000000000000'"$WRAPPED_COLLATERAL"'"},"latest"],"id":1}' \
+            | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))")
+          echo "USDT in WrappedCollateral (raw): $USDT_REGULAR"
+
+          # vUSDT balance of YieldBearingWrappedCollateral (Earning Yield TVL)
+          VUSDT_YIELD=$(curl -s -X POST "$RPC" \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"'"$VUSDT"'","data":"0x70a08231000000000000000000000000'"$YIELD_WRAPPED_COLLATERAL"'"},"latest"],"id":2}' \
+            | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))")
+          echo "vUSDT in YieldBearingWrappedCollateral (raw): $VUSDT_YIELD"
+
+          # vUSDT exchange rate (to convert vUSDT -> USDT)
+          EXCHANGE_RATE=$(curl -s -X POST "$RPC" \
+            -H "Content-Type: application/json" \
+            -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"'"$VUSDT"'","data":"0x182df0f5"},"latest"],"id":3}' \
+            | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))")
+          echo "vUSDT exchange rate (raw): $EXCHANGE_RATE"
+
+          # Calculate TVL using Python for big number precision
+          python3 << 'PYEOF' > tvl.json
+          import json
+
+          usdt_regular_raw = $USDT_REGULAR
+          vusdt_yield_raw = $VUSDT_YIELD
+          exchange_rate_raw = $EXCHANGE_RATE
+
+          # USDT has 18 decimals on BSC
+          regular_tvl = usdt_regular_raw / 1e18
+
+          # vUSDT -> USDT conversion:
+          # underlying_raw = vToken_raw * exchangeRate / 1e18
+          # underlying_usd = underlying_raw / 1e18 (USDT decimals)
+          yield_tvl = (vusdt_yield_raw * exchange_rate_raw) / 1e36
+
+          total_tvl = regular_tvl + yield_tvl
+
+          print(json.dumps({
+              "regularTvlUsd": round(regular_tvl, 2),
+              "earningYieldTvlUsd": round(yield_tvl, 2),
+              "totalValueLockedUsd": round(total_tvl, 2)
+          }))
+          PYEOF
+          echo "TVL breakdown:"
+          cat tvl.json
+
+      - name: Merge stats into stats.json
+        run: |
+          python3 << 'PYEOF'
+          import json
+
+          with open('stats_graphql.json') as f:
+              stats = json.load(f)
+
+          with open('tvl.json') as f:
+              tvl = json.load(f)
+
+          # Add TVL data into stats
+          if 'data' in stats and 'statistics' in stats['data']:
+              stats['data']['statistics']['totalValueLockedUsd'] = tvl['totalValueLockedUsd']
+              stats['data']['statistics']['regularTvlUsd'] = tvl['regularTvlUsd']
+              stats['data']['statistics']['earningYieldTvlUsd'] = tvl['earningYieldTvlUsd']
+
+          with open('stats.json', 'w') as f:
+              json.dump(stats, f)
+
+          print("Final stats.json:")
+          print(json.dumps(stats, indent=2))
+          PYEOF
 
       - name: Commit if changed
         run: |
