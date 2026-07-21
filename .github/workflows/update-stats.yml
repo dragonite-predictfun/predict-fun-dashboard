@@ -23,6 +23,7 @@ jobs:
           cat stats_graphql.json
 
       - name: Fetch on-chain TVL from BSC
+        continue-on-error: true
         run: |
           RPC="https://bsc-dataseed.binance.org/"
           USDT="0x55d398326f99059fF775485246999027B3197955"
@@ -31,6 +32,9 @@ jobs:
           # Predict.fun BSC contracts
           WRAPPED_COLLATERAL="66239b70133773A72A0D589E5564E88a50Cd39e7"
           YIELD_WRAPPED_COLLATERAL="Cfb9beF5F7B748aC72311F057f3a888BC73334D9"
+
+          # balanceOf(address) selector = 0x70a08231
+          # exchangeRateStored() selector = 0x182df0f5
 
           # USDT balance of WrappedCollateral (Regular TVL)
           USDT_REGULAR=$(curl -s -X POST "$RPC" \
@@ -54,7 +58,8 @@ jobs:
           echo "vUSDT exchange rate (raw): $EXCHANGE_RATE"
 
           # Calculate TVL using Python for big number precision
-          python3 << 'PYEOF' > tvl.json
+          # NOTE: heredoc without quotes so shell variables expand
+          python3 << PYEOF > tvl_onchain.json
           import json
 
           usdt_regular_raw = $USDT_REGULAR
@@ -77,25 +82,57 @@ jobs:
               "totalValueLockedUsd": round(total_tvl, 2)
           }))
           PYEOF
-          echo "TVL breakdown:"
-          cat tvl.json
+          echo "On-chain TVL breakdown:"
+          cat tvl_onchain.json
+
+      - name: Fetch DefiLlama TVL
+        run: |
+          DEFILLAMA_TVL=$(curl -s "https://api.llama.fi/tvl/predict-fun")
+          echo "DefiLlama TVL: $DEFILLAMA_TVL"
+          echo "$DEFILLAMA_TVL" > tvl_defillama.txt
 
       - name: Merge stats into stats.json
         run: |
           python3 << 'PYEOF'
-          import json
+          import json, os
 
           with open('stats_graphql.json') as f:
               stats = json.load(f)
 
-          with open('tvl.json') as f:
-              tvl = json.load(f)
+          # Try on-chain TVL first
+          onchain_tvl = None
+          if os.path.exists('tvl_onchain.json'):
+              try:
+                  with open('tvl_onchain.json') as f:
+                      tvl = json.load(f)
+                  if tvl.get('totalValueLockedUsd', 0) > 1_000_000:
+                      onchain_tvl = tvl
+                      print(f"Using on-chain TVL: ${tvl['totalValueLockedUsd']:,.2f}")
+                  else:
+                      print(f"On-chain TVL too low (${tvl.get('totalValueLockedUsd', 0):,.2f}), using DefiLlama")
+              except Exception as e:
+                  print(f"Failed to read on-chain TVL: {e}")
 
-          # Add TVL data into stats
+          # DefiLlama TVL as fallback
+          defillama_tvl = None
+          if os.path.exists('tvl_defillama.txt'):
+              try:
+                  with open('tvl_defillama.txt') as f:
+                      defillama_tvl = float(f.read().strip())
+                  print(f"DefiLlama TVL: ${defillama_tvl:,.2f}")
+              except Exception as e:
+                  print(f"Failed to read DefiLlama TVL: {e}")
+
+          # Use on-chain if valid, otherwise DefiLlama
           if 'data' in stats and 'statistics' in stats['data']:
-              stats['data']['statistics']['totalValueLockedUsd'] = tvl['totalValueLockedUsd']
-              stats['data']['statistics']['regularTvlUsd'] = tvl['regularTvlUsd']
-              stats['data']['statistics']['earningYieldTvlUsd'] = tvl['earningYieldTvlUsd']
+              if onchain_tvl:
+                  stats['data']['statistics']['totalValueLockedUsd'] = onchain_tvl['totalValueLockedUsd']
+                  stats['data']['statistics']['regularTvlUsd'] = onchain_tvl['regularTvlUsd']
+                  stats['data']['statistics']['earningYieldTvlUsd'] = onchain_tvl['earningYieldTvlUsd']
+                  stats['data']['statistics']['tvlSource'] = 'onchain'
+              elif defillama_tvl and defillama_tvl > 0:
+                  stats['data']['statistics']['totalValueLockedUsd'] = round(defillama_tvl, 2)
+                  stats['data']['statistics']['tvlSource'] = 'defillama'
 
           with open('stats.json', 'w') as f:
               json.dump(stats, f)
