@@ -39,47 +39,56 @@ jobs:
           YIELD_1="Cfb9beF5F7B748aC72311F057f3a888BC73334D9"
           YIELD_2="9400F8Ad57e9e0F352345935d6D3175975eb1d9F"
 
-          # balanceOf(address) = 0x70a08231
-          # exchangeRateStored() = 0x182df0f5
+          # Helper: parse first uint256 from eth_call result (first 32 bytes only)
+          parse_uint256() {
+            python3 -c "
+          import sys, json
+          r = json.load(sys.stdin).get('result', '0x0')
+          # Take only first 66 chars (0x + 64 hex = 32 bytes = uint256)
+          if len(r) > 66:
+              r = r[:66]
+          print(int(r, 16))
+          "
+          }
 
           # USDT balance of Regular contract 1
           USDT_R1=$(curl -s -X POST "$RPC" \
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"'"$USDT"'","data":"0x70a08231000000000000000000000000'"$REGULAR_1"'"},"latest"],"id":1}' \
-            | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))")
+            | parse_uint256)
           echo "USDT in Regular_1: $USDT_R1"
 
           # USDT balance of Regular contract 2
           USDT_R2=$(curl -s -X POST "$RPC" \
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"'"$USDT"'","data":"0x70a08231000000000000000000000000'"$REGULAR_2"'"},"latest"],"id":2}' \
-            | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))")
+            | parse_uint256)
           echo "USDT in Regular_2: $USDT_R2"
 
           # vUSDT balance of Yield contract 1
           VUSDT_Y1=$(curl -s -X POST "$RPC" \
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"'"$VUSDT"'","data":"0x70a08231000000000000000000000000'"$YIELD_1"'"},"latest"],"id":3}' \
-            | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))")
+            | parse_uint256)
           echo "vUSDT in Yield_1: $VUSDT_Y1"
 
           # vUSDT balance of Yield contract 2
           VUSDT_Y2=$(curl -s -X POST "$RPC" \
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"'"$VUSDT"'","data":"0x70a08231000000000000000000000000'"$YIELD_2"'"},"latest"],"id":4}' \
-            | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))")
+            | parse_uint256)
           echo "vUSDT in Yield_2: $VUSDT_Y2"
 
-          # vUSDT exchange rate (to convert vUSDT -> underlying USDT)
+          # vUSDT exchange rate
           EXCHANGE_RATE=$(curl -s -X POST "$RPC" \
             -H "Content-Type: application/json" \
             -d '{"jsonrpc":"2.0","method":"eth_call","params":[{"to":"'"$VUSDT"'","data":"0x182df0f5"},"latest"],"id":5}' \
-            | python3 -c "import sys,json; print(int(json.load(sys.stdin)['result'],16))")
+            | parse_uint256)
           echo "vUSDT exchange rate: $EXCHANGE_RATE"
 
-          # Calculate TVL (unquoted heredoc so shell vars expand)
+          # Calculate TVL using integer arithmetic (avoids float overflow)
           python3 << PYEOF > tvl_onchain.json
-          import json
+          import json, sys
 
           usdt_r1 = $USDT_R1
           usdt_r2 = $USDT_R2
@@ -88,15 +97,21 @@ jobs:
           exchange_rate = $EXCHANGE_RATE
 
           # Regular TVL: USDT has 18 decimals on BSC
-          regular_tvl = (usdt_r1 + usdt_r2) / 1e18
+          # Use integer arithmetic: multiply by 100 first for 2 decimal places, then integer divide
+          regular_tvl_cents = (usdt_r1 + usdt_r2) * 100 // 10**18
+          regular_tvl = regular_tvl_cents / 100.0
 
           # Earning Yield TVL: vUSDT has 8 decimals
           # exchangeRate mantissa = 10^(18 + underlyingDecimals - 8) = 10^28
           # underlying = vToken_raw * exchangeRate / 1e18 (raw USDT with 18 decimals)
           # USD = underlying / 1e18
-          yield_tvl = ((vusdt_y1 + vusdt_y2) * exchange_rate) / 1e36
+          # Combined: USD = vToken_raw * exchangeRate / 1e36
+          yield_tvl_cents = ((vusdt_y1 + vusdt_y2) * exchange_rate) * 100 // 10**36
+          yield_tvl = yield_tvl_cents / 100.0
 
           total_tvl = regular_tvl + yield_tvl
+
+          print(f"Regular: \${regular_tvl:,.2f} | Yield: \${yield_tvl:,.2f} | Total: \${total_tvl:,.2f}", file=sys.stderr)
 
           result = {
               "regularTvlUsd": round(regular_tvl, 2),
@@ -104,7 +119,6 @@ jobs:
               "totalValueLockedUsd": round(total_tvl, 2)
           }
           print(json.dumps(result))
-          print(f"Regular: \${regular_tvl:,.2f} | Yield: \${yield_tvl:,.2f} | Total: \${total_tvl:,.2f}", file=__import__('sys').stderr)
           PYEOF
           echo "On-chain TVL:"
           cat tvl_onchain.json
@@ -172,3 +186,4 @@ jobs:
           git add stats.json
           git diff --staged --quiet || git commit -m "Update stats.json [skip ci]"
           git push
+
