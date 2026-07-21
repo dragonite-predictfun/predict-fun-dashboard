@@ -383,7 +383,7 @@ async function fetchData() {
     var prevTvl = tvlValues.filter(function(v) { return v !== null; }).slice(-8, -7)[0] || 0;
     document.getElementById('stat-tvl').textContent = fmt(lastTvl);
     // Show TVL source
-    var tvlSource = pfStats.tvl ? 'On-chain (Regular + Yield)' : 'DeFiLlama';
+    var tvlSource = pfStats.tvlSource === 'onchain' ? 'On-chain (Regular + Yield)' : 'DeFiLlama';
     var tvlPct = pctChange(lastTvl, prevTvl);
     if (tvlPct !== null) {
       var el = document.getElementById('stat-tvl-change');
